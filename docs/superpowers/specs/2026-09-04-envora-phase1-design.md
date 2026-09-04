@@ -89,7 +89,7 @@ class Detection:
 
 @dataclass(frozen=True)
 class AnalysisResult:
-    stack: Detection
+    stack: list[Detection]
     package_manager: Detection
     framework: Detection
     runtime_version: Detection
@@ -97,6 +97,16 @@ class AnalysisResult:
     env_vars: list[Detection]
     services: list[Detection]
 ```
+
+`stack` is `list[Detection]`, not a singular `Detection`, so a repo with
+more than one stack (a Node frontend alongside a Python backend, as in
+the `belgattitude/nextjs-monorepo-example` validation case) can be
+represented as multiple confident detections instead of forcing the
+detector to arbitrarily pick one or degrade confidence for a case it's
+actually sure about. Phase 1's stack detector only ever populates this
+list with a single entry for non-monorepo repos — genuine multi-stack
+splitting is out of scope here — but shaping the field this way now
+avoids a breaking change to `AnalysisResult` later.
 
 Every detector returns `Detection` objects — never a bare guess. A
 missing or ambiguous signal is not an error; it's a `Detection` with
@@ -124,8 +134,12 @@ Single filtered walk shared by all detectors, excluding:
 `node_modules`, `.git`, `dist`, `build`, `venv`, `.venv`, `__pycache__`,
 `.next`, `target` (Rust), `vendor` (Go).
 
-Also size-caps individual files before regex scanning (skip files above
-a threshold, e.g. 1MB) so binary or generated files don't get scanned.
+Also size-caps individual files before regex scanning via a named
+constant, `MAX_SCAN_FILE_BYTES` (default 1MB), rather than a magic
+number inline — so binary or generated files don't get scanned, and the
+threshold has one place to tune once real repos (e.g. the FastAPI
+template's lockfiles/generated OpenAPI schemas) show it needs
+adjusting.
 
 ## Per-signal detection strategy
 
@@ -147,11 +161,20 @@ weak evidence, not `None`.
 
 **Framework** — config file presence (`next.config.js`, `manage.py`,
 FastAPI/Flask import patterns in source) cross-checked against manifest
-dependencies for higher confidence when both agree.
+dependencies. Tiebreak rule: config file alone or manifest dependency
+alone → `MEDIUM`; both agree → `HIGH`; both present but naming different
+frameworks (e.g. a stale `next.config.js` left over from a migration,
+manifest no longer lists `next`) → `LOW`, with both pieces of evidence
+listed so the conflict is visible rather than silently resolved.
 
 **Runtime version** — `engines.node` in package.json, `.nvmrc`,
 `.python-version`, `requires-python` / `[tool.poetry.dependencies]
-python` in pyproject.toml.
+python` in pyproject.toml. Tiebreak rule when sources disagree (e.g.
+`.nvmrc` says 18, `engines.node` says 20): the manifest/lockfile-adjacent
+source (`package.json` engines, `pyproject.toml` requires-python) wins
+over the loose version-pin file (`.nvmrc`, `.python-version`), confidence
+drops to `MEDIUM`, and evidence lists both conflicting values — never a
+silent pick with no trace of the disagreement.
 
 **Ports** — regex scoped to actual binding contexts only, never a bare
 digit scan:
@@ -185,6 +208,11 @@ and something is there, just not confidently readable.
 passes the file list to each detector, assembles the `AnalysisResult`.
 Detectors are independent and side-effect-free (pure functions over the
 walked file list); the orchestrator has no detection logic of its own.
+The stack detector returns `list[Detection]`; for Phase 1 it always
+returns a single-entry list except where multiple independent manifest
+files (e.g. both `package.json` and `pyproject.toml` at the repo root)
+are unambiguously present, in which case each gets its own `HIGH`/`MEDIUM`
+entry per the same evidence rules as a single-stack repo.
 
 ## CLI
 
