@@ -141,6 +141,62 @@ def test_pyproject_with_bare_date_value_does_not_crash(tmp_path):
     assert detection.confidence == Confidence.LOW
 
 
+def test_polyglot_root_checks_python_manifest_behind_package_json(tmp_path):
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"react": "18.0.0"}}), encoding="utf-8"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["fastapi>=0.100"]\n', encoding="utf-8"
+    )
+
+    detection = detect_framework(tmp_path)
+
+    assert detection.value == "fastapi"
+    assert detection.confidence == Confidence.MEDIUM
+
+
+def test_polyglot_root_with_two_frameworks_reports_neither(tmp_path):
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"next": "14.0.0"}}), encoding="utf-8"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["fastapi>=0.100"]\n', encoding="utf-8"
+    )
+
+    detection = detect_framework(tmp_path)
+
+    assert detection.value is None
+    assert detection.confidence == Confidence.LOW
+    assert "conflicting" in detection.evidence[0]
+
+
+def test_config_breaks_tie_between_two_manifest_frameworks(tmp_path):
+    (tmp_path / "next.config.js").write_text("module.exports = {}", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"next": "14.0.0"}}), encoding="utf-8"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["fastapi>=0.100"]\n', encoding="utf-8"
+    )
+
+    detection = detect_framework(tmp_path)
+
+    assert detection.value == "nextjs"
+    assert detection.confidence == Confidence.HIGH
+
+
+def test_all_present_manifests_must_be_silent_for_silent_result(tmp_path):
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"react": "18.0.0"}}), encoding="utf-8"
+    )
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\n", encoding="utf-8")
+
+    detection = detect_framework(tmp_path)
+
+    assert detection.value is None
+    assert detection.confidence == Confidence.LOW
+
+
 def test_malformed_package_json_degrades_to_low_with_evidence(tmp_path):
     (tmp_path / "package.json").write_text("{not valid json,,,", encoding="utf-8")
 

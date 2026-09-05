@@ -119,66 +119,122 @@ def _config_signal(repo_path: Path) -> tuple[str, str] | tuple[None, str] | None
     return framework, f"{filename} present at repo root"
 
 
-def _manifest_signal(repo_path: Path) -> tuple[str | None, str | None, str]:
+def _package_json_signal(path: Path) -> tuple[str | None, str, str]:
+    data, error = parse_json(path)
+    if error is not None:
+        return None, f"package.json present but unparseable: {error}", "error"
+    # Guard against non-dict JSON (e.g., null, [], etc.)
+    if not isinstance(data, dict):
+        return None, "package.json present but not a JSON object", "error"
+    # Guard against dependencies/devDependencies not being dicts
+    deps_dict = data.get("dependencies", {})
+    devdeps_dict = data.get("devDependencies", {})
+    if not isinstance(deps_dict, dict) or not isinstance(devdeps_dict, dict):
+        return None, "package.json present but dependencies field is malformed", "error"
+    deps = {**deps_dict, **devdeps_dict}
+    match = _match_framework(_normalize_dep_name(name) for name in deps)
+    if match:
+        dep_name, framework = match
+        return framework, f'"{dep_name}" listed in package.json dependencies', "found"
+    return None, "package.json present but lists no known framework dependencies", "silent"
+
+
+def _pyproject_signal(path: Path) -> tuple[str | None, str, str]:
+    data, error = parse_toml(path)
+    if error is not None:
+        return None, f"pyproject.toml present but unparseable: {error}", "error"
+    # Guard against non-dict TOML
+    if not isinstance(data, dict):
+        return None, "pyproject.toml present but not a valid TOML object", "error"
+    match = _match_framework(_pyproject_dep_names(data))
+    if match:
+        dep_name, framework = match
+        return framework, f'"{dep_name}" listed in pyproject.toml dependencies', "found"
+    return None, "pyproject.toml present but references no known frameworks", "silent"
+
+
+def _requirements_signal(path: Path) -> tuple[str | None, str, str]:
+    text = read_text_safe(path) or ""
+    match = _match_framework(_requirements_dep_names(text))
+    if match:
+        dep_name, framework = match
+        return framework, f'"{dep_name}" listed in requirements.txt', "found"
+    return None, "requirements.txt present but lists no known framework dependencies", "silent"
+
+
+_MANIFEST_SIGNALS: list[tuple[str, object]] = [
+    ("package.json", _package_json_signal),
+    ("pyproject.toml", _pyproject_signal),
+    ("requirements.txt", _requirements_signal),
+]
+
+
+def _manifest_signal(
+    repo_path: Path, config_framework: str | None = None
+) -> tuple[str | None, str | None, str]:
     """
+    Inspect every manifest present at the repo root, not just the first one:
+    a polyglot root (package.json for the frontend, pyproject.toml for the
+    backend) must not hide its Python side behind its JavaScript side.
+
     Returns (framework, evidence, status) where status is one of:
     - "found": framework dependency found
-    - "silent": manifest file present but no known framework found
+    - "silent": every manifest present was checked and none matched
     - "absent": no manifest file found
     - "error": manifest file present but unparseable or malformed
+    - "multi": different manifests name different frameworks
     """
-    package_json = repo_path / "package.json"
-    if package_json.is_file():
-        data, error = parse_json(package_json)
-        if error is not None:
-            return None, f"package.json present but unparseable: {error}", "error"
-        # Guard against non-dict JSON (e.g., null, [], etc.)
-        if not isinstance(data, dict):
-            return None, "package.json present but not a JSON object", "error"
-        # Guard against dependencies/devDependencies not being dicts
-        deps_dict = data.get("dependencies", {})
-        devdeps_dict = data.get("devDependencies", {})
-        if not isinstance(deps_dict, dict) or not isinstance(devdeps_dict, dict):
-            return None, "package.json present but dependencies field is malformed", "error"
-        deps = {**deps_dict, **devdeps_dict}
-        match = _match_framework(_normalize_dep_name(name) for name in deps)
-        if match:
-            dep_name, framework = match
-            return framework, f'"{dep_name}" listed in package.json dependencies', "found"
-        # Manifest present but no known framework found
-        return None, "package.json present but lists no known framework dependencies", "silent"
+    found: list[tuple[str, str]] = []
+    errors: list[str] = []
+    silent: list[str] = []
 
-    pyproject = repo_path / "pyproject.toml"
-    if pyproject.is_file():
-        data, error = parse_toml(pyproject)
-        if error is not None:
-            return None, f"pyproject.toml present but unparseable: {error}", "error"
-        # Guard against non-dict TOML
-        if not isinstance(data, dict):
-            return None, "pyproject.toml present but not a valid TOML object", "error"
-        match = _match_framework(_pyproject_dep_names(data))
-        if match:
-            dep_name, framework = match
-            return framework, f'"{dep_name}" listed in pyproject.toml dependencies', "found"
-        # Manifest present but no known framework found
-        return None, "pyproject.toml present but references no known frameworks", "silent"
+    for filename, signal in _MANIFEST_SIGNALS:
+        path = repo_path / filename
+        if not path.is_file():
+            continue
+        framework, evidence, status = signal(path)  # type: ignore[operator]
+        if status == "found" and framework is not None:
+            found.append((framework, evidence))
+        elif status == "error":
+            errors.append(evidence)
+        else:
+            silent.append(evidence)
 
-    requirements = repo_path / "requirements.txt"
-    if requirements.is_file():
-        text = read_text_safe(requirements) or ""
-        match = _match_framework(_requirements_dep_names(text))
-        if match:
-            dep_name, framework = match
-            return framework, f'"{dep_name}" listed in requirements.txt', "found"
-        # Manifest present but no known framework found
-        return None, "requirements.txt present but lists no known framework dependencies", "silent"
+    if found:
+        frameworks = {framework for framework, _ in found}
+        if len(frameworks) > 1:
+            # Polyglot root: manifests name genuinely different frameworks
+            # (e.g. package.json -> nextjs, pyproject.toml -> fastapi).
+            # AnalysisResult.framework is a single Detection, unlike .stack,
+            # so both cannot be reported. A root config file naming one of
+            # them breaks the tie; otherwise report no single framework and
+            # list what was seen, the same way conflicting config files are
+            # handled rather than silently picking one.
+            if config_framework is not None and config_framework in frameworks:
+                match_evidence = next(e for f, e in found if f == config_framework)
+                return config_framework, match_evidence, "found"
+            listed = "; ".join(evidence for _, evidence in found)
+            return (
+                None,
+                f"conflicting framework signals across manifests: {listed}",
+                "multi",
+            )
 
+        framework, evidence = found[0]
+        # A real match still stands even if another manifest was unreadable;
+        # the unreadable one is reported alongside it as evidence.
+        combined = "; ".join([evidence, *errors])
+        return framework, combined, "found"
+
+    if errors:
+        return None, "; ".join(errors), "error"
+    if silent:
+        return None, "; ".join(silent), "silent"
     return None, None, "absent"
 
 
 def detect_framework(repo_path: Path) -> Detection:
     config = _config_signal(repo_path)
-    manifest_framework, manifest_evidence, manifest_status = _manifest_signal(repo_path)
 
     # Handle config conflicts (config returns (None, error_message))
     config_error = None
@@ -190,8 +246,22 @@ def detect_framework(repo_path: Path) -> Detection:
         else:
             config_framework, config_evidence = config
 
+    manifest_framework, manifest_evidence, manifest_status = _manifest_signal(
+        repo_path, config_framework
+    )
+
     # Handle unparseable/malformed manifest (error status)
     if manifest_status == "error":
+        evidence = [manifest_evidence]
+        if config_error:
+            evidence.append(config_error)
+        elif config_evidence:
+            evidence.append(config_evidence)
+        return Detection(value=None, confidence=Confidence.LOW, evidence=evidence)
+
+    # Different manifests name different frameworks and no config broke the
+    # tie - report none rather than arbitrarily picking one.
+    if manifest_status == "multi":
         evidence = [manifest_evidence]
         if config_error:
             evidence.append(config_error)
