@@ -735,6 +735,10 @@ from pathlib import Path
 
 from envora.analyzer.models import Confidence, Detection
 
+# Root-level manifests only (no subdirectory/monorepo walk — see spec
+# Non-goals). Each manifest found produces its own HIGH-confidence
+# Detection; when multiple stacks' manifests are present, all of them
+# are returned — no single value is chosen among them.
 _STACK_MANIFESTS: list[tuple[str, tuple[str, ...]]] = [
     ("node", ("package.json",)),
     ("python", ("pyproject.toml", "setup.py", "requirements.txt")),

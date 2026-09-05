@@ -27,6 +27,13 @@ completion gate (below) passes.
 - No FastAPI service layer (the tech stack lists FastAPI for the
   eventual API; Phase 1 is CLI-only).
 - No frontend.
+- No subdirectory/monorepo manifest scanning in the stack detector —
+  `stack.py` looks at repo-root manifest files only. A nested manifest
+  (e.g. `apps/web/package.json`, `apps/api/pyproject.toml`) is not
+  detected in Phase 1; splitting a true monorepo into per-package stack
+  entries is deferred. This is a scope cut, not an oversight — don't let
+  the orchestrator or later phases quietly assume root-only scanning
+  extends to subdirectories without revisiting this.
 
 ## Project setup
 
