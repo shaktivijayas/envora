@@ -33,9 +33,8 @@ def detect_env_vars(repo_path: Path, files: list[Path]) -> list[Detection]:
                 if match:
                     var_name = match.group(1)
                     found.setdefault(var_name, []).append(f"{rel_path}: `{line.strip()}`")
-                    # Track HIGH confidence for dotenv files, don't override if already set to HIGH
-                    if var_name not in confidence_map or confidence_map[var_name] != Confidence.HIGH:
-                        confidence_map[var_name] = Confidence.HIGH
+                    # A dotenv declaration is the strongest signal; it always wins.
+                    confidence_map[var_name] = Confidence.HIGH
             continue
 
         if file_path.name.startswith("README"):
