@@ -114,7 +114,7 @@ def test_non_table_pyproject_toml_degrades_gracefully(tmp_path):
 
 def test_non_dict_tool_section_degrades_gracefully(tmp_path):
     """tool as a string instead of a table should degrade gracefully."""
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n\ntool = "not a table"\n', encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text('tool = "not a table"\n\n[project]\nname = "x"\n', encoding="utf-8")
 
     detection = detect_runtime_version(tmp_path)
 
