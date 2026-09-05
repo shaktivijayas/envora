@@ -10,6 +10,7 @@ _GENERAL_PORT_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"app\.listen\(\s*(\d{2,5})"),
     re.compile(r"\.listen\(\s*(?:port\s*=\s*)?(\d{2,5})"),
     re.compile(r"PORT\s*[=:]\s*(\d{2,5})"),
+    re.compile(r"PORT\s*\|\|\s*(\d{2,5})"),
     re.compile(r"uvicorn\.run\([^)]*port\s*=\s*(\d{2,5})"),
     re.compile(r"--port[= ](\d{2,5})"),
     re.compile(r'\.Run\(":(\d{2,5})"\)'),

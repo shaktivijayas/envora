@@ -64,3 +64,17 @@ def test_detects_django_runserver(tmp_path):
     detections = detect_ports(tmp_path, [manage])
 
     assert {d.value for d in detections} == {"8000"}
+
+
+def test_detects_env_port_with_fallback_default(tmp_path):
+    # Extremely common Node/Express idiom: `const port = process.env.PORT || 5006`
+    index = tmp_path / "index.js"
+    index.write_text(
+        "const port = process.env.PORT || 5006\napp.listen(port, () => {})",
+        encoding="utf-8",
+    )
+
+    detections = detect_ports(tmp_path, [index])
+
+    assert {d.value for d in detections} == {"5006"}
+    assert all(d.confidence == Confidence.HIGH for d in detections)
