@@ -20,6 +20,7 @@ def main() -> None:
 def analyze(
     repo_url: str = typer.Argument(..., help="GitHub repo URL to analyze"),
 ) -> None:
+    """Clone a repo and print its deterministic analysis as JSON."""
     try:
         with clone(repo_url) as cloned:
             result = analyze_repo(cloned.path)
