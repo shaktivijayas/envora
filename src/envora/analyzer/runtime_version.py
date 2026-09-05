@@ -70,13 +70,17 @@ def _python_pin_file(repo_path: Path) -> tuple[str | None, str | None]:
 
 
 def detect_runtime_version(repo_path: Path) -> Detection:
+    fallback_error_evidence = None
+
     for manifest_fn, pin_fn in (
         (_node_manifest_version, _node_pin_file),
         (_python_manifest_version, _python_pin_file),
     ):
         manifest_value, manifest_evidence = manifest_fn(repo_path)
         if manifest_evidence and manifest_value is None:
-            return Detection(value=None, confidence=Confidence.LOW, evidence=[manifest_evidence])
+            if fallback_error_evidence is None:
+                fallback_error_evidence = manifest_evidence
+            # Don't return yet; check this ecosystem's pin file, then try the next ecosystem
 
         pin_value, pin_evidence = pin_fn(repo_path)
 
@@ -101,6 +105,13 @@ def detect_runtime_version(repo_path: Path) -> Detection:
 
         if pin_value:
             return Detection(value=pin_value, confidence=Confidence.MEDIUM, evidence=[pin_evidence])
+
+    if fallback_error_evidence:
+        return Detection(
+            value=None,
+            confidence=Confidence.LOW,
+            evidence=[fallback_error_evidence],
+        )
 
     return Detection(
         value=None,

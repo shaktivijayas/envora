@@ -66,3 +66,47 @@ def test_no_signal_returns_low_confidence_none(tmp_path):
 
     assert detection.value is None
     assert detection.confidence == Confidence.LOW
+
+
+def test_malformed_package_json_fallback_to_nvmrc(tmp_path):
+    """Malformed package.json should not abort; pin file fallback should be used."""
+    (tmp_path / "package.json").write_text("{not valid,,,", encoding="utf-8")
+    (tmp_path / ".nvmrc").write_text("18\n", encoding="utf-8")
+
+    detection = detect_runtime_version(tmp_path)
+
+    assert detection.value == "18"
+    assert detection.confidence == Confidence.MEDIUM
+
+
+def test_malformed_package_json_fallback_to_python_manifest(tmp_path):
+    """Malformed package.json should not prevent checking other ecosystems."""
+    (tmp_path / "package.json").write_text("{not valid,,,", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text('[project]\nrequires-python = ">=3.11"\n', encoding="utf-8")
+
+    detection = detect_runtime_version(tmp_path)
+
+    assert detection.value == ">=3.11"
+    assert detection.confidence == Confidence.HIGH
+
+
+def test_non_dict_package_json_degrades_gracefully(tmp_path):
+    """Non-dict package.json (e.g., []) should degrade gracefully without crash."""
+    (tmp_path / "package.json").write_text("[]", encoding="utf-8")
+
+    detection = detect_runtime_version(tmp_path)
+
+    assert detection.value is None
+    assert detection.confidence == Confidence.LOW
+    assert "not a JSON object" in detection.evidence[0]
+
+
+def test_non_table_pyproject_toml_degrades_gracefully(tmp_path):
+    """Non-table pyproject.toml sections should degrade gracefully without crash."""
+    # project is a string instead of a table
+    (tmp_path / "pyproject.toml").write_text('project = "not a table"\n', encoding="utf-8")
+
+    detection = detect_runtime_version(tmp_path)
+
+    assert detection.value is None
+    assert detection.confidence == Confidence.LOW
