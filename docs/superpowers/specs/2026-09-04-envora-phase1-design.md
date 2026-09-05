@@ -151,8 +151,10 @@ adjusting.
 ## Per-signal detection strategy
 
 Manifest/lockfile evidence is always preferred (HIGH) over regex
-evidence (MEDIUM/LOW). Each detector degrades gracefully rather than
-raising:
+evidence (MEDIUM/LOW) — except where a field's rule below requires
+corroboration for HIGH, as with Framework (a manifest dependency alone is
+only `MEDIUM` there; HIGH requires it to agree with a config-file signal).
+Each detector degrades gracefully rather than raising:
 
 **Stack** — presence of `package.json` (Node), `pyproject.toml` /
 `setup.py` / `requirements.txt` (Python), `Cargo.toml` (Rust), `go.mod`
@@ -184,17 +186,50 @@ drops to `MEDIUM`, and evidence lists both conflicting values — never a
 silent pick with no trace of the disagreement.
 
 **Ports** — regex scoped to actual binding contexts only, never a bare
-digit scan:
-- `app.listen(`, `.listen(port` (Node)
-- `PORT=`, `PORT:` (env/config)
-- `EXPOSE` (Dockerfile)
-- `:\d{2,5}` specifically inside Dockerfile / docker-compose.yml lines
-- `uvicorn.run(..., port=`, `flask run --port`, Django `runserver`
-- `.Run(":8080")` / `net.Listen` (Go)
+digit scan. Confidence tiers reflect whether the value is *declared* or
+merely *implied*:
+- `HIGH` — a declared binding: `EXPOSE` in a `Dockerfile`; a
+  `host:container` port mapping list item in `docker-compose.yml`/`.yaml`
+  (line-anchored to an actual YAML `ports:` list entry, e.g. `- "8080:80"`
+  — never a bare `:\d{2,5}` scan across the whole file, which would
+  false-positive on a `FROM image:20` version tag); a literal numeric
+  argument to `.listen(`/`app.listen(` (Node).
+- `MEDIUM` — a source-level match that implies a port without a
+  self-contained declaration: `PORT=`/`PORT:` or a `PORT || <default>`
+  fallback idiom, `uvicorn.run(..., port=`, `--port`/`flask run --port`,
+  Django `runserver`, Go's `.Run(":8080")`/`net.Listen`. This includes the
+  common case of an app reading its port from an environment variable at
+  runtime (e.g. `process.env.PORT || 5006`) — the value is genuinely
+  ambiguous at analysis time (it depends on what the deployment
+  environment sets), so `MEDIUM` is the honest ceiling, not a detector
+  limitation to fix. **Not every repo's port signal can reach `HIGH`** —
+  a repo with no `Dockerfile`/compose file and only an env-driven port in
+  source stays at `MEDIUM` correctly; see the completion gate note below.
+- `LOW` — a match inside a documentation file (`README*`, `.md`, `.mdx`,
+  `.rst`) — describes a port, doesn't bind one.
 
 **Env vars** — regex over `.env.example`, `README*`, and source patterns
 `process\.env\.\w+`, `os\.getenv\(["']\w+["']\)`,
-`os\.environ\[["']\w+["']\]`.
+`os\.environ\[["']\w+["']\]`. Confidence tiers: `HIGH` for a declaration
+in an actual `.env.example`/`.sample`/`.template` file (a real config
+artifact); `MEDIUM` for a `KEY=value`-shaped line found in a `README*`
+file (documentation, not a real config file) or a source-code reference
+(`process.env.X`, `os.getenv(...)`, `os.environ[...]`) — these two sources
+are deliberately the same tier, since neither is a genuine config
+artifact; a variable seen in both a dotenv file and elsewhere keeps `HIGH`
+(the dotenv file's tier always wins, never gets downgraded by a weaker
+source also mentioning the same name).
+
+**Services** — connection-string regex (`postgres(ql)?://`, `redis://`,
+`mongodb(+srv)?://`, `mysql://`) plus an existing `docker-compose.yml`'s
+`image:` lines as corroborating evidence when present. Confidence tiers:
+`HIGH` when a matching `docker-compose.yml`/`.yaml` service `image:` line
+corroborates the service (a declared config artifact, same tier logic as
+Ports' `EXPOSE`/compose-mapping case); `MEDIUM` for a connection-string
+regex match alone, with no compose corroboration — this holds regardless
+of how many source files repeat the same connection string; repetition of
+the same weak signal is not corroboration and must never promote `MEDIUM`
+to `HIGH` on its own.
 
 **Services** — connection-string regex (`postgres(ql)?://`, `redis://`,
 `mongodb://`, `mysql://`) plus an existing `docker-compose.yml`'s
@@ -248,9 +283,21 @@ a per-commit CI blocker — run explicitly via `pytest -m integration`.
 Phase 2 work starts:
 
 1. Five real repos, one per stack/package-manager combination, detect
-   stack + ports + package manager at `HIGH` confidence with correct
-   values:
+   stack + package manager at `HIGH` confidence with correct values, and
+   ports at whatever confidence tier the repo's actual structure honestly
+   supports per the Ports rule above — `HIGH` when the repo has a
+   declared binding (`Dockerfile` `EXPOSE`, a compose port mapping, or a
+   literal `.listen(<number>)`), `MEDIUM` when the only signal is an
+   env-driven port read in source (e.g. `process.env.PORT || <default>`).
+   Requiring `HIGH` for ports specifically on every repo regardless of
+   its actual structure is unmeetable by design — an env-driven port is
+   genuinely ambiguous at analysis time, and forcing `HIGH` there would
+   mean lying about confidence, which is the one thing every detector in
+   this phase exists to never do:
    - `heroku/node-js-getting-started` — Node/Express/npm, `PORT` env var
+     (ports lands at `MEDIUM` — no `Dockerfile`/compose file in this repo,
+     only the env-driven fallback idiom; this is the correct, honest
+     result, not a detector gap)
    - `unjs/nitro` — Node/pnpm workspaces (substituted for
      `belgattitude/nextjs-monorepo-example`, which had drifted to yarn
      by implementation time)
