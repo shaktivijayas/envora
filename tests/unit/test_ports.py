@@ -18,7 +18,7 @@ def test_detects_uvicorn_port_kwarg(tmp_path):
 
     detections = detect_ports(tmp_path, [main])
 
-    assert any(d.value == "8000" for d in detections)
+    assert {d.value for d in detections} == {"8000"}
 
 
 def test_detects_dockerfile_expose(tmp_path):
@@ -27,7 +27,8 @@ def test_detects_dockerfile_expose(tmp_path):
 
     detections = detect_ports(tmp_path, [dockerfile])
 
-    assert any(d.value == "4000" for d in detections)
+    # Must detect EXPOSE 4000 but NOT match :20 from base image tag
+    assert {d.value for d in detections} == {"4000"}
 
 
 def test_ignores_bare_numbers_that_are_not_binding_contexts(tmp_path):
@@ -45,3 +46,21 @@ def test_no_files_returns_low_confidence_none(tmp_path):
 
     assert detections[0].value is None
     assert detections[0].confidence == Confidence.LOW
+
+
+def test_detects_docker_compose_port_mapping(tmp_path):
+    compose = tmp_path / "docker-compose.yml"
+    compose.write_text("services:\n  app:\n    ports:\n      - \"8080:80\"\n", encoding="utf-8")
+
+    detections = detect_ports(tmp_path, [compose])
+
+    assert {d.value for d in detections} == {"8080"}
+
+
+def test_detects_django_runserver(tmp_path):
+    manage = tmp_path / "manage.py"
+    manage.write_text("python manage.py runserver 8000", encoding="utf-8")
+
+    detections = detect_ports(tmp_path, [manage])
+
+    assert {d.value for d in detections} == {"8000"}
