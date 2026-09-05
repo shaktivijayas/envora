@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import json
+import re
+from collections.abc import Iterable
 from pathlib import Path
 
 from envora.analyzer.models import Confidence, Detection
@@ -20,6 +21,80 @@ _MANIFEST_DEP_FRAMEWORKS: dict[str, str] = {
     "fastapi": "fastapi",
     "flask": "flask",
 }
+
+# Characters that terminate a package name in a PEP 508 requirement string or a
+# requirements.txt line: version specifiers, extras, markers, comments, URLs.
+_NAME_TERMINATORS = "<>=!~[]; #,@"
+
+
+def _normalize_dep_name(raw: str) -> str:
+    """Normalize a dependency name for exact comparison (PEP 503 style)."""
+    return re.sub(r"[-_.]+", "-", raw.strip()).lower()
+
+
+def _requirement_package_name(requirement: str) -> str | None:
+    """Extract the bare, normalized package name from a requirement string.
+
+    Returns None for blank lines, comments and pip options (`-r other.txt`).
+    """
+    text = requirement.strip()
+    if not text or text.startswith("#") or text.startswith("-"):
+        return None
+    for index, char in enumerate(text):
+        if char in _NAME_TERMINATORS:
+            text = text[:index]
+            break
+    return _normalize_dep_name(text) or None
+
+
+def _match_framework(dep_names: Iterable[str]) -> tuple[str, str] | None:
+    """Return (dep_name, framework) for the first exact dependency-name match.
+
+    Matching is exact on normalized names, never a substring scan: otherwise
+    `flask-caching` matches "flask" and a description containing "next
+    generation" matches "next".
+    """
+    names = set(dep_names)
+    for dep_name, framework in _MANIFEST_DEP_FRAMEWORKS.items():
+        if _normalize_dep_name(dep_name) in names:
+            return dep_name, framework
+    return None
+
+
+def _pyproject_dep_names(data: dict) -> set[str]:
+    """Collect declared dependency names from PEP 621 and Poetry tables."""
+    names: set[str] = set()
+
+    project = data.get("project")
+    if isinstance(project, dict):
+        dependencies = project.get("dependencies")
+        if isinstance(dependencies, list):
+            for entry in dependencies:
+                if isinstance(entry, str):
+                    name = _requirement_package_name(entry)
+                    if name:
+                        names.add(name)
+
+    tool = data.get("tool")
+    poetry = tool.get("poetry") if isinstance(tool, dict) else None
+    poetry_deps = poetry.get("dependencies") if isinstance(poetry, dict) else None
+    if isinstance(poetry_deps, dict):
+        for entry in poetry_deps:
+            if isinstance(entry, str):
+                name = _normalize_dep_name(entry)
+                if name:
+                    names.add(name)
+
+    return names
+
+
+def _requirements_dep_names(text: str) -> set[str]:
+    names: set[str] = set()
+    for line in text.splitlines():
+        name = _requirement_package_name(line)
+        if name:
+            names.add(name)
+    return names
 
 
 def _config_signal(repo_path: Path) -> tuple[str, str] | tuple[None, str] | None:
@@ -66,9 +141,10 @@ def _manifest_signal(repo_path: Path) -> tuple[str | None, str | None, str]:
         if not isinstance(deps_dict, dict) or not isinstance(devdeps_dict, dict):
             return None, "package.json present but dependencies field is malformed", "error"
         deps = {**deps_dict, **devdeps_dict}
-        for dep_name, framework in _MANIFEST_DEP_FRAMEWORKS.items():
-            if dep_name in deps:
-                return framework, f'"{dep_name}" listed in package.json dependencies', "found"
+        match = _match_framework(_normalize_dep_name(name) for name in deps)
+        if match:
+            dep_name, framework = match
+            return framework, f'"{dep_name}" listed in package.json dependencies', "found"
         # Manifest present but no known framework found
         return None, "package.json present but lists no known framework dependencies", "silent"
 
@@ -80,21 +156,20 @@ def _manifest_signal(repo_path: Path) -> tuple[str | None, str | None, str]:
         # Guard against non-dict TOML
         if not isinstance(data, dict):
             return None, "pyproject.toml present but not a valid TOML object", "error"
-        # default=str: TOML natively parses bare dates/times into datetime
-        # objects, which json.dumps cannot serialize.
-        haystack = json.dumps(data, default=str).lower()
-        for dep_name, framework in _MANIFEST_DEP_FRAMEWORKS.items():
-            if dep_name in haystack:
-                return framework, f'"{dep_name}" referenced in pyproject.toml', "found"
+        match = _match_framework(_pyproject_dep_names(data))
+        if match:
+            dep_name, framework = match
+            return framework, f'"{dep_name}" listed in pyproject.toml dependencies', "found"
         # Manifest present but no known framework found
         return None, "pyproject.toml present but references no known frameworks", "silent"
 
     requirements = repo_path / "requirements.txt"
     if requirements.is_file():
-        text = (read_text_safe(requirements) or "").lower()
-        for dep_name, framework in _MANIFEST_DEP_FRAMEWORKS.items():
-            if dep_name in text:
-                return framework, f'"{dep_name}" referenced in requirements.txt', "found"
+        text = read_text_safe(requirements) or ""
+        match = _match_framework(_requirements_dep_names(text))
+        if match:
+            dep_name, framework = match
+            return framework, f'"{dep_name}" listed in requirements.txt', "found"
         # Manifest present but no known framework found
         return None, "requirements.txt present but lists no known framework dependencies", "silent"
 
