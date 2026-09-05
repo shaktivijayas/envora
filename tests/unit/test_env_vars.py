@@ -46,3 +46,27 @@ def test_no_env_var_references_returns_low_confidence_none(tmp_path):
 
     assert detections[0].value is None
     assert detections[0].confidence == Confidence.LOW
+
+
+def test_detects_env_example_in_subdirectory_at_high_confidence(tmp_path):
+    backend_dir = tmp_path / "backend"
+    backend_dir.mkdir()
+    env_file = backend_dir / ".env.example"
+    env_file.write_text("DATABASE_URL=postgres://localhost/db\nPORT=3000\n", encoding="utf-8")
+
+    detections = detect_env_vars(tmp_path, [env_file])
+
+    values = {d.value for d in detections}
+    assert values == {"DATABASE_URL", "PORT"}
+    assert all(d.confidence == Confidence.HIGH for d in detections)
+
+
+def test_detects_env_vars_in_readme(tmp_path):
+    readme = tmp_path / "README.md"
+    readme.write_text("# Setup\n\nSet these env vars:\nDATABASE_URL=postgres://localhost/db\nSECRET_KEY=my-secret\n", encoding="utf-8")
+
+    detections = detect_env_vars(tmp_path, [readme])
+
+    values = {d.value for d in detections}
+    assert values == {"DATABASE_URL", "SECRET_KEY"}
+    assert all(d.confidence == Confidence.MEDIUM for d in detections)

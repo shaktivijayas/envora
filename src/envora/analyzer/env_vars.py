@@ -18,6 +18,7 @@ _DOTENV_FILENAMES = {".env.example", ".env.sample", ".env.template"}
 
 def detect_env_vars(repo_path: Path, files: list[Path]) -> list[Detection]:
     found: dict[str, list[str]] = {}
+    confidence_map: dict[str, Confidence] = {}
 
     for file_path in files:
         text = read_text_safe(file_path)
@@ -30,13 +31,31 @@ def detect_env_vars(repo_path: Path, files: list[Path]) -> list[Detection]:
             for line in text.splitlines():
                 match = _DOTENV_LINE.match(line)
                 if match:
-                    found.setdefault(match.group(1), []).append(f"{rel_path}: `{line.strip()}`")
+                    var_name = match.group(1)
+                    found.setdefault(var_name, []).append(f"{rel_path}: `{line.strip()}`")
+                    # Track HIGH confidence for dotenv files, don't override if already set to HIGH
+                    if var_name not in confidence_map or confidence_map[var_name] != Confidence.HIGH:
+                        confidence_map[var_name] = Confidence.HIGH
+            continue
+
+        if file_path.name.startswith("README"):
+            for line in text.splitlines():
+                match = _DOTENV_LINE.match(line)
+                if match:
+                    var_name = match.group(1)
+                    found.setdefault(var_name, []).append(f"{rel_path}: `{line.strip()}`")
+                    # Track MEDIUM confidence for README files, don't override if already set to HIGH
+                    if var_name not in confidence_map:
+                        confidence_map[var_name] = Confidence.MEDIUM
             continue
 
         for pattern in _SOURCE_PATTERNS:
             for match in pattern.finditer(text):
                 var_name = match.group(1)
                 found.setdefault(var_name, []).append(f"{rel_path}: matched `{match.group(0)}`")
+                # Track MEDIUM confidence for source patterns, don't override if already set to HIGH or MEDIUM
+                if var_name not in confidence_map:
+                    confidence_map[var_name] = Confidence.MEDIUM
 
     if not found:
         return [
@@ -49,6 +68,6 @@ def detect_env_vars(repo_path: Path, files: list[Path]) -> list[Detection]:
 
     detections = []
     for var_name, evidence in sorted(found.items()):
-        confidence = Confidence.HIGH if any(e.startswith(".env") for e in evidence) else Confidence.MEDIUM
+        confidence = confidence_map.get(var_name, Confidence.MEDIUM)
         detections.append(Detection(value=var_name, confidence=confidence, evidence=evidence))
     return detections
