@@ -251,8 +251,12 @@ Phase 2 work starts:
    stack + ports + package manager at `HIGH` confidence with correct
    values:
    - `heroku/node-js-getting-started` — Node/Express/npm, `PORT` env var
-   - `belgattitude/nextjs-monorepo-example` — pnpm workspaces, Next.js
-   - `tiangolo/full-stack-fastapi-template` — Python/FastAPI/poetry, Postgres
+   - `unjs/nitro` — Node/pnpm workspaces (substituted for
+     `belgattitude/nextjs-monorepo-example`, which had drifted to yarn
+     by implementation time)
+   - `nsidnev/fastapi-realworld-example-app` — Python/FastAPI/poetry
+     (substituted for `tiangolo/full-stack-fastapi-template`, which had
+     drifted to uv by implementation time)
    - `tokio-rs/mini-redis` — Rust/Cargo, listening port
    - `gothinkster/golang-gin-realworld-example-app` — Go/go.mod, Postgres
 
