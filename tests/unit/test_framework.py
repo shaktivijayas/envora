@@ -141,6 +141,53 @@ def test_pyproject_with_bare_date_value_does_not_crash(tmp_path):
     assert detection.confidence == Confidence.LOW
 
 
+def test_fastapi_import_plus_manifest_gives_high_confidence(tmp_path):
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\n\napp = FastAPI()\n", encoding="utf-8"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["fastapi>=0.100"]\n', encoding="utf-8"
+    )
+
+    detection = detect_framework(tmp_path)
+
+    assert detection.value == "fastapi"
+    assert detection.confidence == Confidence.HIGH
+    assert len(detection.evidence) == 2
+
+
+def test_fastapi_import_alone_gives_medium_confidence(tmp_path):
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\n\napp = FastAPI()\n", encoding="utf-8"
+    )
+
+    detection = detect_framework(tmp_path)
+
+    assert detection.value == "fastapi"
+    assert detection.confidence == Confidence.MEDIUM
+
+
+def test_flask_import_plus_requirements_gives_high_confidence(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "from flask import Flask\n\napp = Flask(__name__)\n", encoding="utf-8"
+    )
+    (tmp_path / "requirements.txt").write_text("Flask==3.0.0\n", encoding="utf-8")
+
+    detection = detect_framework(tmp_path)
+
+    assert detection.value == "flask"
+    assert detection.confidence == Confidence.HIGH
+
+
+def test_source_without_framework_import_is_not_a_signal(tmp_path):
+    (tmp_path / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    detection = detect_framework(tmp_path)
+
+    assert detection.value is None
+    assert detection.confidence == Confidence.LOW
+
+
 def test_polyglot_root_checks_python_manifest_behind_package_json(tmp_path):
     (tmp_path / "package.json").write_text(
         json.dumps({"dependencies": {"react": "18.0.0"}}), encoding="utf-8"

@@ -15,6 +15,21 @@ _CONFIG_FRAMEWORKS: list[tuple[str, str]] = [
     ("manage.py", "django"),
 ]
 
+# Root entry points scanned for framework imports (spec: "FastAPI/Flask import
+# patterns in source" is a framework signal alongside config-file presence).
+_SOURCE_ENTRYPOINTS: tuple[str, ...] = (
+    "main.py",
+    "app.py",
+    "application.py",
+    "wsgi.py",
+    "asgi.py",
+)
+
+_SOURCE_IMPORT_FRAMEWORKS: list[tuple[str, re.Pattern[str]]] = [
+    ("fastapi", re.compile(r"from\s+fastapi\s+import|import\s+fastapi\b|\bFastAPI\s*\(")),
+    ("flask", re.compile(r"from\s+flask\s+import|import\s+flask\b|\bFlask\s*\(")),
+]
+
 _MANIFEST_DEP_FRAMEWORKS: dict[str, str] = {
     "next": "nextjs",
     "django": "django",
@@ -97,26 +112,52 @@ def _requirements_dep_names(text: str) -> set[str]:
     return names
 
 
+def _source_import_signals(repo_path: Path) -> list[tuple[str, str, str]]:
+    """Framework imports in root entry-point sources, as a config-side signal.
+
+    FastAPI and Flask have no marker config file, so without this they could
+    never corroborate a manifest and never reach HIGH confidence. Only root
+    entry points are read: detect_framework is a root-only detector and takes
+    no pre-walked file list.
+    """
+    signals: list[tuple[str, str, str]] = []
+    for filename in _SOURCE_ENTRYPOINTS:
+        path = repo_path / filename
+        if not path.is_file():
+            continue
+        text = read_text_safe(path)
+        if text is None:
+            continue
+        for framework, pattern in _SOURCE_IMPORT_FRAMEWORKS:
+            match = pattern.search(text)
+            if match:
+                signals.append(
+                    (framework, filename, f"{filename}: matched `{match.group(0).strip()}`")
+                )
+    return signals
+
+
 def _config_signal(repo_path: Path) -> tuple[str, str] | tuple[None, str] | None:
-    found_configs: list[tuple[str, str]] = []
+    found_configs: list[tuple[str, str, str]] = []
     for filename, framework in _CONFIG_FRAMEWORKS:
         if (repo_path / filename).is_file():
-            found_configs.append((framework, filename))
+            found_configs.append((framework, filename, f"{filename} present at repo root"))
+    found_configs.extend(_source_import_signals(repo_path))
 
     if not found_configs:
         return None
 
     # Check for conflicts among config files
-    frameworks = {framework for framework, _ in found_configs}
+    frameworks = {framework for framework, _, _ in found_configs}
     if len(frameworks) > 1:
         # Multiple conflicting config files
-        config_strs = [f'"{filename}"' for _, filename in found_configs]
+        config_strs = [f'"{filename}"' for _, filename, _ in found_configs]
         frameworks_str = ", ".join(f'"{fw}"' for fw in sorted(frameworks))
         return None, f"conflicting framework signals: {', '.join(config_strs)} indicate different frameworks: {frameworks_str}"
 
     # All config files agree on the same framework
-    framework, filename = found_configs[0]
-    return framework, f"{filename} present at repo root"
+    framework, _filename, evidence = found_configs[0]
+    return framework, evidence
 
 
 def _package_json_signal(path: Path) -> tuple[str | None, str, str]:
