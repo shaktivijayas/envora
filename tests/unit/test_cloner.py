@@ -1,7 +1,9 @@
+import shutil
+
 import git
 import pytest
 
-from envora.cloner import CloneError, clone
+from envora.cloner import ClonedRepo, CloneError, clone
 
 
 @pytest.fixture
@@ -24,6 +26,18 @@ def test_clone_succeeds_and_returns_path_and_branch(local_source_repo):
         temp_dir = cloned.path
 
     assert not temp_dir.exists()  # context manager cleans up on exit
+
+
+def test_exit_never_propagates_cleanup_failure(tmp_path, monkeypatch):
+    def always_fails(*args, **kwargs):
+        raise OSError("directory is busy")
+
+    monkeypatch.setattr(shutil, "rmtree", always_fails)
+    cloned = ClonedRepo(path=tmp_path, branch="main", url="file:///somewhere")
+
+    with pytest.warns(RuntimeWarning, match="could not remove temporary clone"):
+        with cloned:
+            pass  # a successful analysis must not be lost to a cleanup error
 
 
 def test_clone_raises_clone_error_for_nonexistent_source(tmp_path):
