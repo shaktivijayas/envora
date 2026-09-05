@@ -44,40 +44,64 @@ def _config_signal(repo_path: Path) -> tuple[str, str] | tuple[None, str] | None
     return framework, f"{filename} present at repo root"
 
 
-def _manifest_signal(repo_path: Path) -> tuple[tuple[str, str] | None, str | None]:
+def _manifest_signal(repo_path: Path) -> tuple[str | None, str | None, str]:
+    """
+    Returns (framework, evidence, status) where status is one of:
+    - "found": framework dependency found
+    - "silent": manifest file present but no known framework found
+    - "absent": no manifest file found
+    - "error": manifest file present but unparseable or malformed
+    """
     package_json = repo_path / "package.json"
     if package_json.is_file():
         data, error = parse_json(package_json)
         if error is not None:
-            return None, f"package.json present but unparseable: {error}"
-        deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
+            return None, f"package.json present but unparseable: {error}", "error"
+        # Guard against non-dict JSON (e.g., null, [], etc.)
+        if not isinstance(data, dict):
+            return None, "package.json present but not a JSON object", "error"
+        # Guard against dependencies/devDependencies not being dicts
+        deps_dict = data.get("dependencies", {})
+        devdeps_dict = data.get("devDependencies", {})
+        if not isinstance(deps_dict, dict) or not isinstance(devdeps_dict, dict):
+            return None, "package.json present but dependencies field is malformed", "error"
+        deps = {**deps_dict, **devdeps_dict}
         for dep_name, framework in _MANIFEST_DEP_FRAMEWORKS.items():
             if dep_name in deps:
-                return (framework, f'"{dep_name}" listed in package.json dependencies'), None
+                return framework, f'"{dep_name}" listed in package.json dependencies', "found"
+        # Manifest present but no known framework found
+        return None, "package.json present but lists no known framework dependencies", "silent"
 
     pyproject = repo_path / "pyproject.toml"
     if pyproject.is_file():
         data, error = parse_toml(pyproject)
         if error is not None:
-            return None, f"pyproject.toml present but unparseable: {error}"
+            return None, f"pyproject.toml present but unparseable: {error}", "error"
+        # Guard against non-dict TOML
+        if not isinstance(data, dict):
+            return None, "pyproject.toml present but not a valid TOML object", "error"
         haystack = json.dumps(data).lower()
         for dep_name, framework in _MANIFEST_DEP_FRAMEWORKS.items():
             if dep_name in haystack:
-                return (framework, f'"{dep_name}" referenced in pyproject.toml'), None
+                return framework, f'"{dep_name}" referenced in pyproject.toml', "found"
+        # Manifest present but no known framework found
+        return None, "pyproject.toml present but references no known frameworks", "silent"
 
     requirements = repo_path / "requirements.txt"
     if requirements.is_file():
         text = (read_text_safe(requirements) or "").lower()
         for dep_name, framework in _MANIFEST_DEP_FRAMEWORKS.items():
             if dep_name in text:
-                return (framework, f'"{dep_name}" referenced in requirements.txt'), None
+                return framework, f'"{dep_name}" referenced in requirements.txt', "found"
+        # Manifest present but no known framework found
+        return None, "requirements.txt present but lists no known framework dependencies", "silent"
 
-    return None, None
+    return None, None, "absent"
 
 
 def detect_framework(repo_path: Path) -> Detection:
     config = _config_signal(repo_path)
-    manifest, manifest_error = _manifest_signal(repo_path)
+    manifest_framework, manifest_evidence, manifest_status = _manifest_signal(repo_path)
 
     # Handle config conflicts (config returns (None, error_message))
     config_error = None
@@ -89,28 +113,33 @@ def detect_framework(repo_path: Path) -> Detection:
         else:
             config_framework, config_evidence = config
 
-    if manifest_error:
-        evidence = [manifest_error]
+    # Handle unparseable/malformed manifest (error status)
+    if manifest_status == "error":
+        evidence = [manifest_evidence]
         if config_error:
             evidence.append(config_error)
         elif config_evidence:
             evidence.append(config_evidence)
         return Detection(value=None, confidence=Confidence.LOW, evidence=evidence)
 
+    # Handle conflicting config files
     if config_error:
         evidence = [config_error]
-        if manifest and manifest[0]:
-            evidence.append(manifest[1])
+        if manifest_status == "silent":
+            evidence.append(manifest_evidence)
+        elif manifest_framework:
+            evidence.append(manifest_evidence)
         return Detection(value=None, confidence=Confidence.LOW, evidence=evidence)
 
-    if config_framework and manifest and manifest[0]:
-        manifest_framework, manifest_evidence = manifest
+    # Config and manifest both found - check if they agree
+    if config_framework and manifest_framework:
         if config_framework == manifest_framework:
             return Detection(
                 value=config_framework,
                 confidence=Confidence.HIGH,
                 evidence=[config_evidence, manifest_evidence],
             )
+        # Config and manifest disagree on which framework
         return Detection(
             value=None,
             confidence=Confidence.LOW,
@@ -120,13 +149,23 @@ def detect_framework(repo_path: Path) -> Detection:
             ],
         )
 
-    if config_framework:
+    # Config present, manifest silent (present but doesn't confirm) - LOW confidence
+    if config_framework and manifest_status == "silent":
+        return Detection(
+            value=None,
+            confidence=Confidence.LOW,
+            evidence=[config_evidence, manifest_evidence],
+        )
+
+    # Config alone (manifest absent) - MEDIUM confidence
+    if config_framework and manifest_status == "absent":
         return Detection(value=config_framework, confidence=Confidence.MEDIUM, evidence=[config_evidence])
 
-    if manifest and manifest[0]:
-        framework, evidence = manifest
-        return Detection(value=framework, confidence=Confidence.MEDIUM, evidence=[evidence])
+    # Manifest alone - MEDIUM confidence
+    if manifest_framework:
+        return Detection(value=manifest_framework, confidence=Confidence.MEDIUM, evidence=[manifest_evidence])
 
+    # No signals at all
     return Detection(
         value=None,
         confidence=Confidence.LOW,
