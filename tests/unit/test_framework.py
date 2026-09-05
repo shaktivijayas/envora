@@ -72,6 +72,19 @@ def test_fastapi_detected_via_pyproject_dependency(tmp_path):
     assert detection.confidence == Confidence.MEDIUM
 
 
+def test_pyproject_with_bare_date_value_does_not_crash(tmp_path):
+    # TOML parses `2024-01-15` into a datetime.date, which is not JSON
+    # serializable by default.
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nreleased = 2024-01-15\n', encoding="utf-8"
+    )
+
+    detection = detect_framework(tmp_path)
+
+    assert detection.value is None
+    assert detection.confidence == Confidence.LOW
+
+
 def test_malformed_package_json_degrades_to_low_with_evidence(tmp_path):
     (tmp_path / "package.json").write_text("{not valid json,,,", encoding="utf-8")
 

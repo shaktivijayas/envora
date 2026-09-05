@@ -80,7 +80,9 @@ def _manifest_signal(repo_path: Path) -> tuple[str | None, str | None, str]:
         # Guard against non-dict TOML
         if not isinstance(data, dict):
             return None, "pyproject.toml present but not a valid TOML object", "error"
-        haystack = json.dumps(data).lower()
+        # default=str: TOML natively parses bare dates/times into datetime
+        # objects, which json.dumps cannot serialize.
+        haystack = json.dumps(data, default=str).lower()
         for dep_name, framework in _MANIFEST_DEP_FRAMEWORKS.items():
             if dep_name in haystack:
                 return framework, f'"{dep_name}" referenced in pyproject.toml', "found"
