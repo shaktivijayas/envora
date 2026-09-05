@@ -110,3 +110,33 @@ def test_non_table_pyproject_toml_degrades_gracefully(tmp_path):
 
     assert detection.value is None
     assert detection.confidence == Confidence.LOW
+
+
+def test_non_dict_tool_section_degrades_gracefully(tmp_path):
+    """tool as a string instead of a table should degrade gracefully."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n\ntool = "not a table"\n', encoding="utf-8")
+
+    detection = detect_runtime_version(tmp_path)
+
+    assert detection.value is None
+    assert detection.confidence == Confidence.LOW
+
+
+def test_non_dict_tool_poetry_degrades_gracefully(tmp_path):
+    """tool.poetry as a string instead of a table should degrade gracefully."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n\n[tool]\npoetry = "not a table"\n', encoding="utf-8")
+
+    detection = detect_runtime_version(tmp_path)
+
+    assert detection.value is None
+    assert detection.confidence == Confidence.LOW
+
+
+def test_non_dict_tool_poetry_dependencies_degrades_gracefully(tmp_path):
+    """tool.poetry.dependencies as a string should degrade gracefully."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n\n[tool.poetry]\ndependencies = "not a table"\n', encoding="utf-8")
+
+    detection = detect_runtime_version(tmp_path)
+
+    assert detection.value is None
+    assert detection.confidence == Confidence.LOW
