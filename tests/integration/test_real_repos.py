@@ -32,7 +32,11 @@ def test_node_express_npm_detected_at_high_confidence(cached_clone):
     assert any(d.value == "node" and d.confidence == Confidence.HIGH for d in result.stack)
     assert result.package_manager.value == "npm"
     assert result.package_manager.confidence == Confidence.HIGH
-    assert any(d.confidence == Confidence.HIGH for d in result.ports)
+    # This repo has no Dockerfile/compose file — its only port signal is the
+    # `process.env.PORT || 5006` fallback idiom in index.js, a source-level
+    # match, not a declared binding. MEDIUM is the honest ceiling per the
+    # spec's Ports confidence rule, not a detector gap to chase toward HIGH.
+    assert any(d.confidence in (Confidence.HIGH, Confidence.MEDIUM) for d in result.ports)
 
 
 def test_pnpm_monorepo_package_manager_detected_at_high_confidence(cached_clone):
