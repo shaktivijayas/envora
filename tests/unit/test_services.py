@@ -49,3 +49,16 @@ def test_no_services_returns_low_confidence_none(tmp_path):
 
     assert detections[0].value is None
     assert detections[0].confidence == Confidence.LOW
+
+
+def test_repeated_connection_strings_without_compose_stays_medium(tmp_path):
+    api = tmp_path / "api.py"
+    api.write_text('DATABASE_URL = "postgres://user:pass@db/app"', encoding="utf-8")
+    worker = tmp_path / "worker.py"
+    worker.write_text('DATABASE_URL = "postgres://user:pass@db/app"', encoding="utf-8")
+
+    detections = detect_services(tmp_path, [api, worker])
+
+    postgres = next(d for d in detections if d.value == "postgres")
+    assert postgres.confidence == Confidence.MEDIUM
+    assert len(postgres.evidence) == 2

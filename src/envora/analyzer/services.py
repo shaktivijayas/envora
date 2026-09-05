@@ -61,6 +61,6 @@ def detect_services(repo_path: Path, files: list[Path]) -> list[Detection]:
 
     detections = []
     for service, evidence in sorted(found.items()):
-        confidence = Confidence.HIGH if len(evidence) > 1 or any("image:" in e for e in evidence) else Confidence.MEDIUM
+        confidence = Confidence.HIGH if any("image:" in e for e in evidence) else Confidence.MEDIUM
         detections.append(Detection(value=service, confidence=confidence, evidence=evidence))
     return detections
