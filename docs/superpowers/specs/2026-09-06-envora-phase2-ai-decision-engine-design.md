@@ -202,10 +202,13 @@ Four possible outcomes per field, in priority order:
      note appended to its `evidence` list (there is always exactly one
      entry to append to, by the weak-list definition above).
 
-3. **ATTEMPTED_FAILED** — the group was triggered, a key was present, the
-   call was attempted, and it never produced a valid, passing result
-   (semantic validation exhausted its one retry, or the network/API retry
-   budget of 2-3 attempts was exhausted).
+3. **ATTEMPTED_FAILED** — the group was triggered, a key was present, a
+   call was attempted, and *this specific field* never validated (semantic
+   validation exhausted its one retry for this field, or the network/API
+   retry budget of 3 attempts was exhausted for the whole call — a network
+   failure means every field in that call's response is unresolved, so it
+   applies uniformly, unlike semantic validation which resolves per field
+   per the Validation & Retry section below).
    - `install`/`dev`/`build`: `Detection(value=None, confidence=Confidence.LOW, evidence=["AI inference attempted, failed validation twice: <last validation error>"])`
      (or the equivalent network-failure phrasing when that's what was
      exhausted).
@@ -239,20 +242,44 @@ own say-so — a manifest, or a later Phase 4 passing build — can earn
    retry budget spent on this class).
 
 2. **Semantic validation** (schema-valid but content-invalid): port
-   outside 1-65535, an empty command string, a command string containing
-   an obviously dangerous pattern (e.g. `rm -rf`, `curl | sh`). Exactly
-   **one** retry total per call, regardless of how many fields in the
-   response failed validation: a fresh single-shot request (not a
-   multi-turn conversation) with *every* validation failure found — not
-   just the first — appended to the prompt (e.g. "Previous response had
-   port 99999 (out of the valid 1-65535 range) and an empty `build`
-   command — provide a corrected answer for both"). A second response
-   that still fails any validation is `ATTEMPTED_FAILED`.
+   outside 1-65535, an empty command string, a command string matching
+   the dangerous-command blocklist below. Exactly **one** retry total per
+   call, regardless of how many fields in the response failed validation:
+   a fresh single-shot request (not a multi-turn conversation) with
+   *every* validation failure found — not just the first — appended to
+   the prompt (e.g. "Previous response had port 99999 (out of the valid
+   1-65535 range) and an empty `build` command — provide a corrected
+   answer for both").
+
+   **Outcome granularity for this class is per-field, not per-call**
+   (unlike Network/API failure below, where a lost response has no
+   per-field content to evaluate at all). A field that still fails
+   validation after the retry is `ATTEMPTED_FAILED`; a field that
+   validated on either the first or the retried attempt is `SUCCESS`,
+   independently — even when other fields in the same response never
+   validate. A response where `install`/`dev`/`build` are valid on the
+   first attempt but `ports` needs the retry (or never validates) resolves
+   as: `install`/`dev`/`build` → `SUCCESS` from attempt one, `ports` →
+   whatever its own outcome is after its own retry. The retry re-requests
+   the *entire* response (all triggered groups), but each field's pass/fail
+   history is tracked and resolved independently of its siblings'.
+
+   **Dangerous-command blocklist** (case-insensitive substring/pattern
+   match against the full command string): `rm -rf`, a pipe into a shell
+   interpreter (`| sh`, `| bash`, `|sh`, `|bash` — covers `curl ... | sh`
+   and `wget ... | bash` style patterns), `sudo`, and the classic fork-bomb
+   shape `:(){ :|:& };:`. This list is intentionally small and will need
+   real-repo-driven additions during implementation — when a command
+   doesn't match anything on the list but the validator's author still
+   isn't confident it's safe, **treat it as a validation failure, not a
+   pass**. Fail-closed is the default posture for anything this list
+   doesn't yet cover, not silent approval.
 
 3. **Network/API failure** (timeout, rate limit, 5xx). Standard
-   retry-with-backoff, 2-3 attempts, using its own counter — entirely
-   independent of the semantic-retry counter above. Exhaustion is
-   `ATTEMPTED_FAILED`.
+   retry-with-backoff, exactly **3** attempts, using its own counter —
+   entirely independent of the semantic-retry counter above (a network
+   failure never consumes the one semantic retry, and vice versa).
+   Exhaustion is `ATTEMPTED_FAILED`.
 
 No failure of any class ever raises out of `enrich()` to the CLI. This is
 a direct, unconditional extension of Phase 1's own invariant ("no detector
