@@ -23,6 +23,29 @@ def test_parse_json_invalid_returns_error_not_exception(tmp_path):
     assert isinstance(error, str) and len(error) > 0
 
 
+def test_parse_json_non_utf8_bytes_does_not_raise(tmp_path):
+    path = tmp_path / "package.json"
+    path.write_bytes(b'{"name": "caf\xe9"}')
+
+    # Must not raise UnicodeDecodeError; a decode-replaced parse failure is fine.
+    data, error = parse_json(path)
+
+    assert data is None or isinstance(data, dict)
+    if data is None:
+        assert isinstance(error, str) and len(error) > 0
+
+
+def test_parse_toml_non_utf8_bytes_does_not_raise(tmp_path):
+    path = tmp_path / "pyproject.toml"
+    path.write_bytes(b'[project]\nname = "caf\xe9"\n')
+
+    data, error = parse_toml(path)
+
+    assert data is None or isinstance(data, dict)
+    if data is None:
+        assert isinstance(error, str) and len(error) > 0
+
+
 def test_parse_toml_valid(tmp_path):
     path = tmp_path / "pyproject.toml"
     path.write_text('[project]\nrequires-python = ">=3.11"\n', encoding="utf-8")

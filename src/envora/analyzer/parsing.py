@@ -7,7 +7,7 @@ from pathlib import Path
 
 def parse_json(path: Path) -> tuple[dict | None, str | None]:
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return None, str(exc)
     try:
@@ -18,7 +18,7 @@ def parse_json(path: Path) -> tuple[dict | None, str | None]:
 
 def parse_toml(path: Path) -> tuple[dict | None, str | None]:
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return None, str(exc)
     try:
