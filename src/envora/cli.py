@@ -11,6 +11,11 @@ from envora.cloner import CloneError, clone
 app = typer.Typer(help="Envora: deterministic repository analysis.")
 
 
+@app.callback()
+def main() -> None:
+    """Envora: deterministic repository analysis."""
+
+
 @app.command()
 def analyze(
     repo_url: str = typer.Argument(..., help="GitHub repo URL to analyze"),

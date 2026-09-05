@@ -17,7 +17,7 @@ def test_analyze_command_prints_json_result(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli_module, "clone", fake_clone)
 
-    result = runner.invoke(app, ["https://github.com/example/repo"])
+    result = runner.invoke(app, ["analyze", "https://github.com/example/repo"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -30,7 +30,7 @@ def test_analyze_command_reports_clone_error_cleanly(monkeypatch):
 
     monkeypatch.setattr(cli_module, "clone", fake_clone)
 
-    result = runner.invoke(app, ["https://github.com/example/does-not-exist"])
+    result = runner.invoke(app, ["analyze", "https://github.com/example/does-not-exist"])
 
     assert result.exit_code == 1
     assert "Error" in result.output
